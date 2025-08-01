@@ -291,5 +291,6 @@ class_id center_x center_y width height
 ---
 
 **개발자**: Claude Code Assistant  
+**원본 GitHub 저장소**: [https://github.com/venture21/autoLabeler](https://github.com/venture21/autoLabeler)  
 **라이선스**: 교육 및 연구 목적 자유 사용  
 **문의**: 이슈 발생 시 소스 코드 검토 또는 문의
