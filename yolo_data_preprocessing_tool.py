@@ -155,11 +155,32 @@ class ImageCanvas(QLabel):
         bytes_per_line = 3 * width
         self.q_image = QImage(self.image.data, width, height, bytes_per_line, QImage.Format_RGB888).rgbSwapped()
         
-        # Reset zoom and pan
-        self.zoom_level = 1.0
+        # Reset zoom and pan, and fit image to view
         self.pan_offset = QPointF(0, 0)
+        self.fit_to_view()
         self.update_display()
         return True
+
+    def fit_to_view(self):
+        if self.q_image is None:
+            return
+
+        view_size = self.size()
+        image_size = self.q_image.size()
+
+        if image_size.width() == 0 or image_size.height() == 0:
+            return
+
+        # Calculate zoom level to fit image to view
+        width_ratio = view_size.width() / image_size.width()
+        height_ratio = view_size.height() / image_size.height()
+        self.zoom_level = min(width_ratio, height_ratio)
+
+        # Center the image
+        self.pan_offset = QPointF(
+            (view_size.width() - image_size.width() * self.zoom_level) / 2,
+            (view_size.height() - image_size.height() * self.zoom_level) / 2
+        )
         
     def update_display(self):
         self.update()
@@ -198,8 +219,7 @@ class ImageCanvas(QLabel):
         """Handle key presses for zoom reset."""
         # Reset zoom and pan with 'R' key
         if event.key() == Qt.Key_R:
-            self.zoom_level = 1.0
-            self.pan_offset = QPointF(0, 0)
+            self.fit_to_view()
             self.update_display()
         else:
             super().keyPressEvent(event)
