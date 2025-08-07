@@ -1,8 +1,5 @@
-0: trash  
-1: plastic_bag  
-2: wrapper  
-3: ramen_cup  
-4: drink_container  
-5: food_container  
-6: tissue  
-7: misc
+0: tissue
+1: plastic_bag
+2: drink_container
+3: cup_noodle
+4: cup

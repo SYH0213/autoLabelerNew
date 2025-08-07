@@ -1037,6 +1037,10 @@ class MainWindow(QMainWindow):
         self.save_btn = QPushButton("Save")
         self.save_btn.clicked.connect(self.save_annotations)
         left_menu.addWidget(self.save_btn)
+
+        self.delete_btn = QPushButton("Delete")
+        self.delete_btn.clicked.connect(self.delete_current_file)
+        left_menu.addWidget(self.delete_btn)
         
         self.data_aug_btn = QPushButton("Data Aug")
         self.data_aug_btn.setCheckable(True)
@@ -1380,6 +1384,45 @@ class MainWindow(QMainWindow):
                 self.save_annotations()
             self.current_image_index = index
             self.load_current_image()
+
+    def delete_current_file(self):
+        if self.current_image_index < 0:
+            return
+
+        image_file = self.image_files[self.current_image_index]
+        label_file = os.path.splitext(image_file)[0] + '.txt'
+
+        reply = QMessageBox.question(self, "파일 삭제",
+                                     f"'{image_file}'와(과) 해당하는 라벨 파일을 삭제하시겠습니까?\n파일은 'deleted_files' 폴더로 이동됩니다.",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+        if reply == QMessageBox.Yes:
+            # Create backup directory if it doesn't exist
+            backup_dir = os.path.join(self.current_directory, "deleted_files")
+            os.makedirs(backup_dir, exist_ok=True)
+
+            # Move image file
+            image_path = os.path.join(self.current_directory, image_file)
+            if os.path.exists(image_path):
+                shutil.move(image_path, os.path.join(backup_dir, image_file))
+
+            # Move label file
+            label_path = os.path.join(self.label_directory, label_file)
+            if os.path.exists(label_path):
+                shutil.move(label_path, os.path.join(backup_dir, label_file))
+
+            # Remove from file list and load next image
+            self.image_files.pop(self.current_image_index)
+            self.file_list.takeItem(self.current_image_index)
+
+            if not self.image_files:
+                self.image_canvas.set_image(None)
+                self.current_image_index = -1
+            elif self.current_image_index >= len(self.image_files):
+                self.current_image_index = len(self.image_files) - 1
+                self.load_current_image()
+            else:
+                self.load_current_image()
             
     def select_class(self, index):
         self.selected_class_index = index
@@ -1574,49 +1617,71 @@ class MainWindow(QMainWindow):
         
     def rotate_image_and_annotations(self, image, annotations, angle):
         h, w = image.shape[:2]
-        center = (w // 2, h // 2)
+        center = (w / 2, h / 2)
         M = cv2.getRotationMatrix2D(center, angle, 1.0)
-        
-        # Calculate new dimensions
+
+        # Calculate new image dimensions to fit the entire rotated image
         cos = np.abs(M[0, 0])
         sin = np.abs(M[0, 1])
         new_w = int((h * sin) + (w * cos))
         new_h = int((h * cos) + (w * sin))
-        
-        # Adjust rotation matrix
+
+        # Adjust rotation matrix to account for the new canvas size
         M[0, 2] += (new_w / 2) - center[0]
         M[1, 2] += (new_h / 2) - center[1]
-        
-        # Rotate image
-        rotated = cv2.warpAffine(image, M, (new_w, new_h))
-        
+
+        # Rotate the image
+        rotated_image = cv2.warpAffine(image, M, (new_w, new_h))
+
         # Rotate annotations
         rotated_annotations = []
         for ann in annotations:
             parts = ann.strip().split()
-            if len(parts) >= 5:
-                class_id = parts[0]
-                cx, cy, bw, bh = map(float, parts[1:5])
-                
-                # Convert to pixel coordinates
-                px = cx * w
-                py = cy * h
-                
-                # Apply rotation
-                new_px = M[0, 0] * px + M[0, 1] * py + M[0, 2]
-                new_py = M[1, 0] * px + M[1, 1] * py + M[1, 2]
-                
-                # Convert back to normalized coordinates
-                new_cx = new_px / new_w
-                new_cy = new_py / new_h
-                
-                # Keep within bounds
-                new_cx = max(0, min(1, new_cx))
-                new_cy = max(0, min(1, new_cy))
-                
-                rotated_annotations.append(f"{class_id} {new_cx:.6f} {new_cy:.6f} {bw:.6f} {bh:.6f}\n")
-                
-        return rotated, rotated_annotations
+            if len(parts) < 5:
+                continue
+
+            class_id = parts[0]
+            cx, cy, bw, bh = map(float, parts[1:5])
+
+            # Get original bounding box corners in pixel coordinates
+            x1 = (cx - bw / 2) * w
+            y1 = (cy - bh / 2) * h
+            x2 = (cx + bw / 2) * w
+            y2 = (cy + bh / 2) * h
+            
+            corners = np.array([
+                [x1, y1], [x2, y1], [x2, y2], [x1, y2]
+            ], dtype=np.float32)
+
+            # Reshape for cv2.transform
+            corners_reshaped = corners.reshape(-1, 1, 2)
+            
+            # Rotate corner points
+            rotated_corners = cv2.transform(corners_reshaped, M)
+            
+            # Find the new axis-aligned bounding box
+            min_x = np.min(rotated_corners[:, 0, 0])
+            max_x = np.max(rotated_corners[:, 0, 0])
+            min_y = np.min(rotated_corners[:, 0, 1])
+            max_y = np.max(rotated_corners[:, 0, 1])
+
+            # Clip to new image boundaries
+            min_x = max(0, min_x)
+            max_x = min(new_w, max_x)
+            min_y = max(0, min_y)
+            max_y = min(new_h, max_y)
+
+            # Calculate new YOLO format values
+            new_bw = (max_x - min_x) / new_w
+            new_bh = (max_y - min_y) / new_h
+            new_cx = (min_x + max_x) / 2 / new_w
+            new_cy = (min_y + max_y) / 2 / new_h
+            
+            # Check for valid box
+            if new_bw > 0 and new_bh > 0:
+                rotated_annotations.append(f"{class_id} {new_cx:.6f} {new_cy:.6f} {new_bw:.6f} {new_bh:.6f}\n")
+
+        return rotated_image, rotated_annotations
         
     def scale_image(self, image, scale):
         h, w = image.shape[:2]
@@ -1720,6 +1785,13 @@ class MainWindow(QMainWindow):
                               f"• Valid: {len(valid_files)}개\n"
                               f"• Test: {len(test_files)}개\n\n"
                               f"저장 위치: {data_dir}")
+
+    def keyPressEvent(self, event):
+        """Handle key presses for deleting files."""
+        if event.key() == Qt.Key_Delete:
+            self.delete_current_file()
+        else:
+            super().keyPressEvent(event)
     
     def eventFilter(self, source, event):
         # Handle keyboard events for file list navigation
